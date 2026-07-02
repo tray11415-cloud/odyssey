@@ -46,6 +46,71 @@ protocol for using them autonomously.
    relations / observations, so a future session can reload and resume.
 7. **Loop** until the done-criteria are met or you are genuinely blocked.
 
+## Architecture: intent inference → parallel generation → scoring
+
+Goal quality should not depend on the user pre-stating every requirement by hand.
+This is the mechanism that replaces manually-built harnesses and hand-tuned
+prompts: infer intent from context, generate multiple candidates, score them,
+keep the winner, and feed the resolution back into memory so next time there is
+less to infer.
+
+```
+                     goal is underspecified
+                              │
+              ┌───────────────┴───────────────┐
+        generality axis                 personalization axis
+   survey how this is commonly      pull prior decisions/preferences
+   done (docs, codebase idioms,     for this user/project from the
+   ecosystem conventions)           `memory` MCP (long-term memory)
+              └───────────────┬───────────────┘
+                       does the user have
+                       an articulated concept?
+                    ┌──────────┴──────────┐
+              has a concept           no concept / open-ended
+         (asked for something      ("you decide", exploratory)
+          specific but incomplete)         │
+                    │                      │
+        infer their intended        research + produce the
+        meaning from codebase +     canonical/best-practice
+        memory + immediate ask      answer directly — don't
+        ("揣摩意思")                 stall on clarification
+                    └──────────┬───────────┘
+                     non-trivial or ambiguous?
+                    generate N candidates in
+                    PARALLEL (subagents / Workflow
+                    parallel()), not one first guess
+                               │
+                        score candidates against
+                        the done-criteria + inferred
+                        intent + codebase conventions
+                               │
+                     keep/merge the winner, verify,
+                     ship as the final artifact
+                               │
+                  write the resolved interpretation
+                  back to the `memory` MCP — narrows
+                  the "no concept" gap next time
+```
+
+Practical rules:
+
+- **Don't over-ask.** Use the `Frame the goal` step's 2–3-question budget for
+  things that are truly load-bearing. For everything else, infer from the
+  codebase, from prior `memory` MCP entries about this user/project, and from
+  general best practice — then proceed.
+- **User-has-a-concept vs no-concept is a fork, not a fallback.** If the ask is
+  specific-but-incomplete, interpret it (don't re-ask for what's implied). If the
+  ask is genuinely open, don't wait for specification — produce the researched
+  canonical answer and let the user redirect it.
+- **Parallelize candidate generation** for anything where a single first attempt
+  is unlikely to be right (design choices, ambiguous asks, creative output) —
+  reach for `Workflow`'s judge-panel / diverse-lens patterns rather than
+  committing to one draft.
+- **Score before shipping**, using the done-criteria from step 1 as the rubric.
+- **Close the loop**: persist the resolved intent/decision to the `memory` MCP.
+  This is what makes the "personalization" axis compound over time instead of
+  re-deriving the same context every session.
+
 ## Long-horizon mechanics
 
 - **Progress:** `TaskCreate` / `TaskUpdate`.

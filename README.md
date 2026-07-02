@@ -36,6 +36,29 @@ the **protocol** for using them autonomously.
 6. **Persist** state to the `memory` MCP so a future session can resume.
 7. **Loop** until the done-criteria are met or genuinely blocked.
 
+### Architecture: intent inference → parallel generation → scoring
+
+Odyssey doesn't require the user to spell out every requirement. It infers
+intent, generates multiple candidates, scores them, and feeds the resolution
+back into memory so next time there's less to infer — this is the mechanism
+meant to replace hand-built harnesses and hand-tuned prompts:
+
+- **Generality vs. personalization** — pull two kinds of context before acting:
+  how this is commonly done (docs/codebase/ecosystem conventions), and this
+  user/project's prior decisions from the `memory` MCP (long-term memory).
+- **Concept vs. no-concept fork** — if the ask is specific-but-incomplete,
+  *infer* the intended meaning from context (don't re-ask for what's implied).
+  If it's genuinely open-ended, research and produce the canonical answer
+  directly rather than stalling on clarification.
+- **Parallel candidates, then score** — for anything a single first guess is
+  unlikely to nail, generate N candidates in parallel (subagents / `Workflow`),
+  score them against the done-criteria, ship the winner.
+- **Close the loop** — persist the resolved interpretation back to `memory` so
+  personalization compounds across sessions instead of resetting every time.
+
+See the "Architecture" section in [`SKILL.md`](SKILL.md) for the full diagram
+and operating rules.
+
 ### Safety boundaries
 
 Autonomous ≠ reckless. Claude proceeds freely on normal, reversible, local work,
@@ -91,6 +114,25 @@ Example:
 5. **驗證** 每個結果才標記完成。
 6. **持久化** 狀態到 `memory` MCP,讓未來的工作階段能續作。
 7. **循環** 直到達成完成條件或真的被卡住。
+
+### 架構:意圖推論 → 平行生成 → 評分
+
+Odyssey 不要求使用者把每個需求都講清楚。它會推論意圖、平行生成多個候選、評分、
+再把定案的解讀寫回記憶,讓下次需要推論的部分變少 —— 這正是用來**部份取代
+harness engineering、全部取代 prompt engineering** 的機制:
+
+- **一般普遍性 vs 个人化** —— 動手前先拉兩種脈絡:市場/文件/程式庫的常見做法
+  (一般普遍性),以及這個使用者/專案在 `memory` MCP 裡的既有決策(長期記憶、个人化)。
+- **有概念 vs 無概念 分岔** —— 若需求「具體但不完整」,直接**揣摩**其真正意思
+  (不用把已隱含的部分再問一次)。若需求真的開放,就直接研究並產出「正解」
+  (最佳實務答案),不要卡在等釐清。
+- **先平行生成候選,再打分** —— 對單次猜測不太可能一次到位的任務(設計選擇、
+  模糊需求、創意產出),平行生成多個樣品(子代理 / `Workflow`),依完成條件打分,
+  選出最終成品。
+- **閉環** —— 把定案的解讀持久化回 `memory`,讓「个人化」隨時間累積,而不是
+  每個 session 都重新推導一次。
+
+完整圖示與操作規則見 [`SKILL.md`](SKILL.md) 的「Architecture」章節。
 
 ### 安全邊界
 
