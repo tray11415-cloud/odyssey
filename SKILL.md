@@ -111,6 +111,69 @@ Practical rules:
   This is what makes the "personalization" axis compound over time instead of
   re-deriving the same context every session.
 
+## Program Architecture: building software to spec
+
+When the goal is "build/construct a program" (a simulation, a tool, a service),
+follow this scaffold instead of writing the final implementation in one shot:
+
+1. **Spec.** Define the I/O contract (inputs, outputs, parameters) and — critically
+   — a **ground truth or reference** to validate against, decided *before* writing
+   implementation code. If no reference exists, either derive one analytically,
+   compute one with a trusted independent method (e.g. a high-precision numerical
+   solver), or use an authoritative existing implementation's output. Without this,
+   "it ran without crashing" gets mistaken for "it's correct."
+2. **Scaffold.** Build the thinnest skeleton that runs end-to-end on trivial input
+   before adding complexity — proves the plumbing (build system, I/O format,
+   invocation) works before the algorithm does.
+3. **Implement the core.** Build the real algorithm incrementally on top of the
+   proven scaffold.
+4. **Instrument.** Add logging/metrics/checkpoints so failures are diagnosable,
+   not silent. A run that produces wrong output with no diagnostics is worse than
+   one that crashes loudly.
+5. **Test against the ground truth from step 1** with a quantitative fidelity
+   metric (not eyeballing) — see "fair metrics" below.
+6. **Calibrate to real constraints.** Probe actual available resources (CPU/GPU/
+   RAM/time budget) before picking scale parameters — don't guess a particle
+   count or dataset size and hope; measure the machine, then size the problem to
+   fit the budget.
+7. **Verify** by actually running it and checking the metric against a threshold.
+   Iterate if below threshold; report the number either way.
+
+**Fair, non-LLM-judge metrics.** Prefer an objective, reproducible metric over
+subjective scoring whenever the output is checkable — e.g. **IoU** (intersection-
+over-union) between a candidate result and ground truth, computed by discretizing
+continuous state (particle positions, pixel regions, etc.) into a grid/bins and
+comparing occupancy: `IoU = |A ∩ B| / |A ∪ B|`. Reach for LLM-as-judge scoring
+only when no objective metric is derivable (subjective quality, open-ended prose).
+
+## Pipeline Architecture: multi-stage execution with Workflow
+
+For work that decomposes into repeatable stages across multiple variants (build
+N things, run N things, score N things), structure execution as an explicit
+pipeline using the `Workflow` tool's primitives rather than one linear pass:
+
+```
+variants → build (parallel, per-variant) → run/execute → score against
+ground truth (parallel, independent verifiers) → aggregate/synthesize
+```
+
+- **Default to `pipeline()`**, not `parallel()` — each variant flows through
+  build → run → score independently, with no barrier between stages. A fast
+  variant finishing "score" shouldn't wait on a slow variant still "building."
+- **Reach for a barrier (`parallel()` awaited fully) only when a later stage
+  genuinely needs every variant's result at once** — e.g. a comparison table
+  that ranks all variants together, or deduping findings across all of them
+  before an expensive next step.
+- **Isolate with `{isolation: 'worktree'}`** when parallel builds mutate
+  overlapping files and would otherwise clobber each other; skip it (cheaper)
+  when each variant writes to its own directory already.
+- **Named pattern — comparative benchmark** (variants competing on the same
+  task): `pipeline(variants, build, run, score)` then aggregate into a table;
+  this is the shape for "compare N approaches/conditions on the same tasks."
+- Workflow requires the user's explicit opt-in per session (it is not implied
+  by Odyssey's general autonomy) — confirm before invoking it, same as any
+  other autonomy-boundary action.
+
 ## Long-horizon mechanics
 
 - **Progress:** `TaskCreate` / `TaskUpdate`.
