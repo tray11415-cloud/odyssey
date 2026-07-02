@@ -59,6 +59,42 @@ meant to replace hand-built harnesses and hand-tuned prompts:
 See the "Architecture" section in [`SKILL.md`](SKILL.md) for the full diagram
 and operating rules.
 
+### odyssey-mcp-server: making it a tool, not just a suggestion
+
+Odyssey ships with a companion MCP server ([`mcp-server/`](mcp-server/)) that
+turns the parallel-generation step from prose into an enforced tool call.
+Benchmarking found that agents would *describe* generating multiple
+candidates without actually doing it — `odyssey_propose_candidates` fixes
+this by requiring **2+ candidates per call** at the schema level; fewer is
+rejected outright.
+
+| Tool | Purpose |
+|---|---|
+| `odyssey_frame_goal` | Record a goal + measurable done-criteria |
+| `odyssey_propose_candidates` | Submit 2+ candidates (rejects fewer) |
+| `odyssey_score_candidates` | Score candidates against done-criteria |
+| `odyssey_resolve` | Commit to the winner, persist the decision |
+| `odyssey_get_history` | Recall past decisions across sessions |
+
+Install:
+
+```bash
+cd odyssey/mcp-server
+npm install && npm run build
+```
+
+Then register it in `~/.claude.json`:
+
+```json
+"odyssey": {
+  "command": "node",
+  "args": ["<path-to>/odyssey/mcp-server/dist/index.js"]
+}
+```
+
+Restart Claude Code. See [`mcp-server/README.md`](mcp-server/README.md) for
+details and `mcp-server/test/smoke_test.mjs` for a working example.
+
 ### Safety boundaries
 
 Autonomous ≠ reckless. Claude proceeds freely on normal, reversible, local work,

@@ -111,6 +111,30 @@ Practical rules:
   This is what makes the "personalization" axis compound over time instead of
   re-deriving the same context every session.
 
+**Enforce it with the `odyssey` MCP, don't just narrate it.** Benchmarking
+found that this loop gets described in prose ("I'll consider a few approaches")
+without actually happening — a single plan gets built anyway. When the
+`odyssey` MCP is connected, use it as the forcing function instead of relying
+on self-discipline:
+
+1. `odyssey_frame_goal(goal, done_criteria)` — do this instead of just stating
+   the goal in your own text; it's the same step 1, made durable.
+2. `odyssey_propose_candidates(goal_id, candidates)` — **requires 2+
+   candidates**, rejects fewer. For non-trivial/ambiguous decisions, generate
+   the candidates in parallel (subagents/Workflow) and submit all of them here
+   before scoring anything.
+3. `odyssey_score_candidates(goal_id, scores)` — score every candidate against
+   the done-criteria; returns the current leader.
+4. `odyssey_resolve(goal_id, winning_candidate_id, rationale)` — commit to the
+   winner with a rationale. This persists to disk, separate from and
+   complementary to the `memory` MCP's knowledge graph.
+5. `odyssey_get_history(...)` at the start of a related task, to check whether
+   this decision (or one like it) was already made.
+
+If the `odyssey` MCP isn't connected, fall back to the manual version of this
+loop described above — but prefer the tool when it's available, since the
+schema itself prevents skipping the parallel-generation step.
+
 ## Program Architecture: building software to spec
 
 When the goal is "build/construct a program" (a simulation, a tool, a service),

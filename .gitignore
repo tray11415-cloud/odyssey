@@ -1,0 +1,4 @@
+node_modules/
+dist/
+*.log
+mcp-server/test/test_decisions.json
