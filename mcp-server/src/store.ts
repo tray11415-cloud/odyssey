@@ -1,4 +1,4 @@
-import { readFileSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
+import { readFileSync, writeFileSync, existsSync, mkdirSync, renameSync } from "node:fs";
 import { dirname } from "node:path";
 import type { Store, GoalRecord } from "./types.js";
 
@@ -15,15 +15,22 @@ function load(): Store {
   try {
     const raw = readFileSync(STORE_PATH, "utf-8");
     if (!raw.trim()) return { goals: [] };
-    return JSON.parse(raw) as Store;
-  } catch {
-    return { goals: [] };
+    const parsed = JSON.parse(raw) as Store;
+    if (!parsed || !Array.isArray(parsed.goals)) {
+      throw new Error("expected top-level object with a goals array");
+    }
+    return parsed;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`Failed to read Odyssey store at ${STORE_PATH}: ${message}`);
   }
 }
 
 function save(store: Store): void {
   ensureDir(STORE_PATH);
-  writeFileSync(STORE_PATH, JSON.stringify(store, null, 2), "utf-8");
+  const tempPath = `${STORE_PATH}.tmp`;
+  writeFileSync(tempPath, JSON.stringify(store, null, 2), "utf-8");
+  renameSync(tempPath, STORE_PATH);
 }
 
 function newId(prefix: string): string {
