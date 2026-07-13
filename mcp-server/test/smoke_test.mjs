@@ -83,6 +83,15 @@ async function main() {
   console.log("PROPOSE:", JSON.stringify(proposedOut, null, 2));
   const [cand1, cand2] = proposedOut.candidates;
 
+  console.log("\n--- testing incomplete scoring (should be REJECTED) ---");
+  const incompleteScore = await callTool("odyssey_score_candidates", {
+    goal_id: goalId,
+    scores: [
+      { candidate_id: cand1.id, score: 5, rationale: "only one score should fail" },
+    ],
+  });
+  console.log("INCOMPLETE SCORE RESULT:", JSON.stringify(incompleteScore.result).slice(0, 300));
+
   const scored = await callTool("odyssey_score_candidates", {
     goal_id: goalId,
     scores: [
@@ -91,6 +100,14 @@ async function main() {
     ],
   });
   console.log("SCORE leader:", scored.result.structuredContent.leader, "(expect", cand2.id, ")");
+
+  console.log("\n--- testing invalid winner (should be REJECTED) ---");
+  const invalidWinner = await callTool("odyssey_resolve", {
+    goal_id: goalId,
+    winning_candidate_id: "cand_not_real",
+    rationale: "should fail validation",
+  });
+  console.log("INVALID WINNER RESULT:", JSON.stringify(invalidWinner.result).slice(0, 300));
 
   const resolved = await callTool("odyssey_resolve", {
     goal_id: goalId,
@@ -102,14 +119,21 @@ async function main() {
   const history = await callTool("odyssey_get_history", { limit: 5, only_unresolved: false });
   console.log("HISTORY count:", history.result.structuredContent.count);
 
+  const singleText = JSON.stringify(singleCand.result).toLowerCase();
+  const incompleteText = JSON.stringify(incompleteScore.result).toLowerCase();
+  const invalidWinnerText = JSON.stringify(invalidWinner.result).toLowerCase();
   const allPass =
     tools.result.tools.length === 5 &&
-    singleCand.result.isError !== false && JSON.stringify(singleCand.result).toLowerCase().includes("least 2") ||
-    JSON.stringify(singleCand.result).toLowerCase().includes("candidates") ;
+    singleText.includes("least 2") &&
+    incompleteText.includes("every candidate") &&
+    invalidWinnerText.includes("not a candidate") &&
+    scored.result.structuredContent.leader === cand2.id &&
+    resolved.result.structuredContent.resolved === true &&
+    history.result.structuredContent.count >= 1;
 
-  console.log("\n=== SMOKE TEST", allPass ? "LIKELY PASS" : "CHECK OUTPUT ABOVE", "===");
+  console.log("\n=== SMOKE TEST", allPass ? "PASS" : "FAIL: CHECK OUTPUT ABOVE", "===");
   child.kill();
-  process.exit(0);
+  process.exit(allPass ? 0 : 1);
 }
 
 main().catch((e) => {

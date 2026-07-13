@@ -50,6 +50,24 @@ function goalSummary(goal: GoalRecord) {
   };
 }
 
+function toolError(text: string) {
+  return {
+    isError: true,
+    content: [{ type: "text" as const, text }],
+  };
+}
+
+function validateCompleteScores(goal: GoalRecord): string | null {
+  if (goal.candidates.length < 2) {
+    return "At least 2 candidates must be proposed before scoring or resolving.";
+  }
+  const unscored = goal.candidates.filter((c) => typeof c.score !== "number");
+  if (unscored.length) {
+    return `All candidates must be scored before resolving. Missing scores for: ${unscored.map((c) => c.id).join(", ")}`;
+  }
+  return null;
+}
+
 // ---------------------------------------------------------------------
 // odyssey_frame_goal
 // ---------------------------------------------------------------------
@@ -122,10 +140,15 @@ Example:
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
   },
   async ({ goal_id, candidates }) => {
-    const record = proposeCandidates(goal_id, candidates);
-    if (!record) {
-      return { content: [{ type: "text", text: `Error: goal_id '${goal_id}' not found. Call odyssey_frame_goal first.` }] };
+    const existing = getGoal(goal_id);
+    if (!existing) {
+      return toolError(`Error: goal_id '${goal_id}' not found. Call odyssey_frame_goal first.`);
     }
+    if (existing.resolved) {
+      return toolError(`Error: goal_id '${goal_id}' is already resolved. Frame a new goal for a new decision.`);
+    }
+    const record = proposeCandidates(goal_id, candidates);
+    if (!record) return toolError(`Error: goal_id '${goal_id}' not found.`);
     const output = goalSummary(record);
     return {
       content: [{ type: "text", text: JSON.stringify(output, null, 2) }],
@@ -161,16 +184,44 @@ Args:
 Returns: updated goal record including a "leader" field (candidate_id with the highest score so far, or null if no scores yet).
 
 Error Handling:
-  - Returns "Error: goal_id not found" if invalid.
-  - Unknown candidate_id entries are silently skipped (not present in the goal's candidate list).`,
+  - Returns an error if goal_id is invalid.
+  - Returns an error if any candidate_id is unknown.
+  - Returns an error unless every proposed candidate is scored exactly once.`,
     inputSchema: ScoreCandidatesInput,
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
   },
   async ({ goal_id, scores }) => {
-    const record = scoreCandidates(goal_id, scores);
-    if (!record) {
-      return { content: [{ type: "text", text: `Error: goal_id '${goal_id}' not found.` }] };
+    const existing = getGoal(goal_id);
+    if (!existing) {
+      return toolError(`Error: goal_id '${goal_id}' not found.`);
     }
+    if (existing.resolved) {
+      return toolError(`Error: goal_id '${goal_id}' is already resolved. Frame a new goal for a new decision.`);
+    }
+    if (existing.candidates.length < 2) {
+      return toolError("Error: score_candidates requires at least 2 proposed candidates.");
+    }
+    const known = new Set(existing.candidates.map((c) => c.id));
+    const seen = new Set<string>();
+    const unknown: string[] = [];
+    const duplicate: string[] = [];
+    for (const s of scores) {
+      if (!known.has(s.candidate_id)) unknown.push(s.candidate_id);
+      if (seen.has(s.candidate_id)) duplicate.push(s.candidate_id);
+      seen.add(s.candidate_id);
+    }
+    if (unknown.length) {
+      return toolError(`Error: unknown candidate_id value(s): ${unknown.join(", ")}`);
+    }
+    if (duplicate.length) {
+      return toolError(`Error: duplicate score entries for candidate_id value(s): ${duplicate.join(", ")}`);
+    }
+    const missing = existing.candidates.filter((c) => !seen.has(c.id)).map((c) => c.id);
+    if (missing.length) {
+      return toolError(`Error: every candidate must be scored in one call. Missing scores for: ${missing.join(", ")}`);
+    }
+    const record = scoreCandidates(goal_id, scores);
+    if (!record) return toolError(`Error: goal_id '${goal_id}' not found.`);
     const scored = record.candidates.filter((c) => typeof c.score === "number");
     const leader = scored.length
       ? scored.reduce((a, b) => ((b.score ?? -Infinity) > (a.score ?? -Infinity) ? b : a))
@@ -206,15 +257,24 @@ Args:
 Returns: the final resolved goal record.
 
 Error Handling:
-  - Returns "Error: goal_id not found" if invalid.`,
+  - Returns an error if goal_id is invalid.
+  - Returns an error if winning_candidate_id is not one of the proposed candidates.
+  - Returns an error if every candidate has not been scored first.`,
     inputSchema: ResolveInput,
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   },
   async ({ goal_id, winning_candidate_id, rationale }) => {
-    const record = resolveGoal(goal_id, winning_candidate_id, rationale);
-    if (!record) {
-      return { content: [{ type: "text", text: `Error: goal_id '${goal_id}' not found.` }] };
+    const existing = getGoal(goal_id);
+    if (!existing) {
+      return toolError(`Error: goal_id '${goal_id}' not found.`);
     }
+    const scoreError = validateCompleteScores(existing);
+    if (scoreError) return toolError(`Error: ${scoreError}`);
+    if (!existing.candidates.some((c) => c.id === winning_candidate_id)) {
+      return toolError(`Error: winning_candidate_id '${winning_candidate_id}' is not a candidate for goal_id '${goal_id}'.`);
+    }
+    const record = resolveGoal(goal_id, winning_candidate_id, rationale);
+    if (!record) return toolError(`Error: goal_id '${goal_id}' not found.`);
     const output = goalSummary(record);
     return {
       content: [{ type: "text", text: JSON.stringify(output, null, 2) }],

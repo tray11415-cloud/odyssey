@@ -1,89 +1,86 @@
-# Odyssey 🧭
+# Odyssey
 
-**Autonomous long-horizon execution skill for Claude Code / Claude Agent SDK.**
-Hand Claude a goal — it plans, picks its own tools, executes, verifies, and keeps
-going until done. No per-step hand-holding.
+Autonomous long-horizon execution skill for Claude Code, Codex-style agents, and other skill-aware coding agents.
 
-**給 Claude Code 的自主長周期執行技能。** 丟一個目標給 Claude,它自己規劃、挑工具、
-執行、驗證,一路跑到完成 —— 不用你逐步下指令。
+Hand the agent a goal and Odyssey gives it a protocol: frame the goal, plan, choose the best available tools, execute, verify, persist progress when possible, and keep going until the done criteria are met.
 
----
+Odyssey does not grant new capabilities. It tells the agent how to use the capabilities already available in the current session.
 
 ## English
 
 ### What it is
 
-`odyssey` is a **skill** (a folder with a `SKILL.md`) that puts Claude into an
-**autonomous, long-horizon operating mode**. Instead of you invoking each tool by
-hand, you hand over an objective and Claude decides — on its own — which of the
-*currently available* skills, MCP servers, subagents, and tools to use, and drives
-the work to completion across as many turns (and sessions) as it takes.
+`odyssey` is a skill folder with a `SKILL.md`. It is meant for multi-step hand-off requests such as:
 
-It does **not** grant new capabilities. Claude already receives every connected
-skill / MCP / tool each session (and new ones appear automatically). Odyssey is
-the **protocol** for using them autonomously.
+```text
+/odyssey Package the app in Desktop/project into an installer and produce a PDF user manual.
+```
 
-### How it works — the loop
+The skill tells the agent to:
 
-1. **Frame** the goal + define measurable "done" criteria (asks 2–3 clarifying
-   questions once if truly ambiguous, then proceeds).
-2. **Plan** into a live task list (`TaskCreate`).
-3. **Take stock** of available skills / MCP / tools and map each sub-task to the
-   best-fit capability.
-4. **Execute**, parallelizing independent work (batched calls, `Workflow`, or
-   subagents).
-5. **Verify** every result before marking it done.
-6. **Persist** state to the `memory` MCP so a future session can resume.
-7. **Loop** until the done-criteria are met or genuinely blocked.
+1. frame the objective and done criteria
+2. keep a live plan
+3. select the best available skills, tools, MCP servers, subagents, or workflows
+4. execute and verify each result
+5. persist long-running state when the environment supports it
+6. continue until done or genuinely blocked
 
-### Architecture: intent inference → parallel generation → scoring
+### Candidate loop
 
-Odyssey doesn't require the user to spell out every requirement. It infers
-intent, generates multiple candidates, scores them, and feeds the resolution
-back into memory so next time there's less to infer — this is the mechanism
-meant to replace hand-built harnesses and hand-tuned prompts:
+For non-trivial choices, Odyssey uses a candidate loop:
 
-- **Generality vs. personalization** — pull two kinds of context before acting:
-  how this is commonly done (docs/codebase/ecosystem conventions), and this
-  user/project's prior decisions from the `memory` MCP (long-term memory).
-- **Concept vs. no-concept fork** — if the ask is specific-but-incomplete,
-  *infer* the intended meaning from context (don't re-ask for what's implied).
-  If it's genuinely open-ended, research and produce the canonical answer
-  directly rather than stalling on clarification.
-- **Parallel candidates, then score** — for anything a single first guess is
-  unlikely to nail, generate N candidates in parallel (subagents / `Workflow`),
-  score them against the done-criteria, ship the winner.
-- **Close the loop** — persist the resolved interpretation back to `memory` so
-  personalization compounds across sessions instead of resetting every time.
+1. infer intent from the request, project, ecosystem conventions, and available memory
+2. generate at least two distinct candidates
+3. score each candidate against the done criteria
+4. keep or merge the winner
+5. persist the decision for future related tasks
 
-See the "Architecture" section in [`SKILL.md`](SKILL.md) for the full diagram
-and operating rules.
+### odyssey-mcp-server
 
-### odyssey-mcp-server: making it a tool, not just a suggestion
-
-Odyssey ships with a companion MCP server ([`mcp-server/`](mcp-server/)) that
-turns the parallel-generation step from prose into an enforced tool call.
-Benchmarking found that agents would *describe* generating multiple
-candidates without actually doing it — `odyssey_propose_candidates` fixes
-this by requiring **2+ candidates per call** at the schema level; fewer is
-rejected outright.
+The optional MCP server in [`mcp-server/`](mcp-server/) turns the candidate loop into tools:
 
 | Tool | Purpose |
 |---|---|
-| `odyssey_frame_goal` | Record a goal + measurable done-criteria |
-| `odyssey_propose_candidates` | Submit 2+ candidates (rejects fewer) |
-| `odyssey_score_candidates` | Score candidates against done-criteria |
-| `odyssey_resolve` | Commit to the winner, persist the decision |
-| `odyssey_get_history` | Recall past decisions across sessions |
+| `odyssey_frame_goal` | Record a goal and measurable done criteria |
+| `odyssey_propose_candidates` | Submit two or more candidate approaches |
+| `odyssey_score_candidates` | Score every candidate against the done criteria |
+| `odyssey_resolve` | Persist the winning candidate and rationale |
+| `odyssey_get_history` | Retrieve prior goals and decisions |
 
-Install:
+The server enforces important invariants: at least two candidates, valid candidate IDs, complete scoring before resolution, and valid winning candidates.
+
+### Install the skill
+
+Clone the repository into your skills directory:
+
+```bash
+git clone https://github.com/tray11415-cloud/odyssey.git ~/.claude/skills/odyssey
+```
+
+For Codex-style local skills, use the equivalent skills directory, for example:
+
+```bash
+git clone https://github.com/tray11415-cloud/odyssey.git ~/.codex/skills/odyssey
+```
+
+Restart the agent so the skill is discovered.
+
+### Install the MCP server
 
 ```bash
 cd odyssey/mcp-server
-npm install && npm run build
+npm install
+npm run build
 ```
 
-Then register it in `~/.claude.json`:
+On Windows PowerShell, if `npm.ps1` is blocked by execution policy, use:
+
+```powershell
+npm.cmd install
+npm.cmd run build
+```
+
+Register the built server in your MCP configuration:
 
 ```json
 "odyssey": {
@@ -92,116 +89,54 @@ Then register it in `~/.claude.json`:
 }
 ```
 
-Restart Claude Code. See [`mcp-server/README.md`](mcp-server/README.md) for
-details and `mcp-server/test/smoke_test.mjs` for a working example.
+Restart the agent after registering the server.
 
-### Safety boundaries
-
-Autonomous ≠ reckless. Claude proceeds freely on normal, reversible, local work,
-but **pauses to confirm** before: irreversible/destructive actions, outward-facing
-actions (sending mail, posting, publishing), moving money, or following untrusted
-links.
-
-### Install
-
-Clone straight into your Claude skills directory:
+### Test
 
 ```bash
-git clone https://github.com/tray11415-cloud/odyssey.git ~/.claude/skills/odyssey
+cd odyssey/mcp-server
+npm run build
+npm run smoke
 ```
 
-Then **restart Claude Code** so the skill is picked up.
+On Windows PowerShell:
 
-> `~/.claude/skills/odyssey/SKILL.md` is all Claude needs; the `README` and
-> `LICENSE` in the same folder are ignored by the loader.
-
-### Usage
-
+```powershell
+npm.cmd run build
+npm.cmd run smoke
 ```
-/odyssey <your goal>
-```
-
-Example:
-
-```
-/odyssey Package the app in Desktop/project into an installer and produce a PDF user manual
-```
-
----
 
 ## 繁體中文
 
 ### 這是什麼
 
-`odyssey` 是一個 **技能**(一個含 `SKILL.md` 的資料夾),讓 Claude 進入
-**自主、長周期的運作模式**。你不用逐一手動呼叫工具,只要交付一個目標,Claude 會
-**自己判斷**要動用當下可用的哪些技能 / MCP 伺服器 / 子代理 / 工具,並跨多個回合
-(甚至多個工作階段)把事情做到完成。
+`odyssey` 是一個長任務自主執行 skill。當你把一個多步驟目標交給 agent 時，它會要求 agent 先界定目標與完成標準，再自行選擇可用的工具、skills、MCP servers、subagents 或工作流，持續執行、驗證並保存進度。
 
-它**不會**新增能力。Claude 每個工作階段本來就會收到所有已連接的技能 / MCP / 工具
-(新增的也會自動出現)。Odyssey 提供的是「**自主運用這些能力**」的協定。
+它不會新增能力；它是一套「如何可靠使用既有能力」的工作協議。
 
-### 運作方式 —— 循環
+### 適合的使用方式
 
-1. **框定** 目標並訂出可衡量的「完成條件」(真的模糊時一次問 2–3 題,之後即依預設進行)。
-2. **規劃** 成即時任務清單(`TaskCreate`)。
-3. **盤點** 可用的技能 / MCP / 工具,把每個子任務對應到最適合的能力。
-4. **執行**,並把獨立工作平行化(批次呼叫、`Workflow`、或多個子代理)。
-5. **驗證** 每個結果才標記完成。
-6. **持久化** 狀態到 `memory` MCP,讓未來的工作階段能續作。
-7. **循環** 直到達成完成條件或真的被卡住。
+```text
+/odyssey 幫我把這個專案打包成安裝程式，並產出一份 PDF 使用手冊。
+```
 
-### 架構:意圖推論 → 平行生成 → 評分
+Agent 應該：
 
-Odyssey 不要求使用者把每個需求都講清楚。它會推論意圖、平行生成多個候選、評分、
-再把定案的解讀寫回記憶,讓下次需要推論的部分變少 —— 這正是用來**部份取代
-harness engineering、全部取代 prompt engineering** 的機制:
+1. 重述目標並定義可驗證的完成標準
+2. 維護任務清單
+3. 根據目前環境選擇合適工具
+4. 一步步執行並驗證結果
+5. 在長任務中保存進度與關鍵決策
+6. 直到完成或真的卡住才停止
 
-- **一般普遍性 vs 个人化** —— 動手前先拉兩種脈絡:市場/文件/程式庫的常見做法
-  (一般普遍性),以及這個使用者/專案在 `memory` MCP 裡的既有決策(長期記憶、个人化)。
-- **有概念 vs 無概念 分岔** —— 若需求「具體但不完整」,直接**揣摩**其真正意思
-  (不用把已隱含的部分再問一次)。若需求真的開放,就直接研究並產出「正解」
-  (最佳實務答案),不要卡在等釐清。
-- **先平行生成候選,再打分** —— 對單次猜測不太可能一次到位的任務(設計選擇、
-  模糊需求、創意產出),平行生成多個樣品(子代理 / `Workflow`),依完成條件打分,
-  選出最終成品。
-- **閉環** —— 把定案的解讀持久化回 `memory`,讓「个人化」隨時間累積,而不是
-  每個 session 都重新推導一次。
+### 候選方案機制
 
-完整圖示與操作規則見 [`SKILL.md`](SKILL.md) 的「Architecture」章節。
+遇到重要或不明確的選擇時，不要只採用第一個想法。應該產生至少兩個候選方案，根據完成標準評分，選出或合併最佳方案，並保存決策理由。
 
 ### 安全邊界
 
-自主 ≠ 亂衝。一般可逆的本機作業 Claude 會直接做,但遇到以下情況會**先徵求確認**:
-不可逆 / 破壞性動作、對外送出(寄信、發文、發佈)、動用金流、或點擊不明連結。
-
-### 安裝
-
-直接 clone 進你的 Claude 技能目錄:
-
-```bash
-git clone https://github.com/tray11415-cloud/odyssey.git ~/.claude/skills/odyssey
-```
-
-然後**重新啟動 Claude Code**,技能才會被載入。
-
-> Claude 只需要 `~/.claude/skills/odyssey/SKILL.md`;同資料夾內的 `README` 與
-> `LICENSE` 載入器會自動忽略。
-
-### 用法
-
-```
-/odyssey <你的目標>
-```
-
-範例:
-
-```
-/odyssey 把 Desktop/專案 打包成安裝程式並產生使用手冊 PDF
-```
-
----
+一般、可逆、本機的操作可以直接進行。遇到刪除或覆寫使用者資料、force push、發信、發布、付款、交易、下單、外部不可撤回行為，或使用者明確要求先確認的行為，必須先停下來取得確認。
 
 ## License
 
-MIT © 2026 tray11415-cloud. See [LICENSE](LICENSE).
+MIT, 2026 tray11415-cloud. See [LICENSE](LICENSE).
